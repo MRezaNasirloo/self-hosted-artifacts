@@ -11,8 +11,11 @@ inputs:
   if-no-files-found:
     description: "'error' to fail when nothing matches; 'warn' or 'ignore' to save nothing, with or without a warning"
     default: error
+  key:
+    description: Folder the files are kept under. Defaults to the run ID; a commit ID lets later runs load them.
+    default: ""
   retention-days:
-    description: Runs of this repository older than this are deleted when saving
+    description: Keys of this repository not saved to for this many days are deleted when saving
     default: "2"
   dir:
     description: Folder on the machine that holds the saved files
@@ -26,6 +29,7 @@ runs:
         NAME: ${{ inputs.name }}
         ARTIFACT_PATH: ${{ inputs.path }}
         IF_NO_FILES_FOUND: ${{ inputs.if-no-files-found }}
+        ARTIFACT_KEY: ${{ inputs.key }}
         RETENTION_DAYS: ${{ inputs.retention-days }}
         ARTIFACTS_DIR: ${{ inputs.dir }}
       run: python3 "$GITHUB_ACTION_PATH/../artifacts.py" save "$NAME"

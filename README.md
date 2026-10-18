@@ -31,12 +31,31 @@ jobs:
 
 ## How it works
 
-- **Save** copies the matching files to `~/self-hosted-artifacts/<owner>_<repo>/<run id>/<name>/files/`,
+- **Save** copies the matching files to `~/self-hosted-artifacts/<owner>_<repo>/<key>/<name>/files/`,
   with a checksum of each in `manifest.json` beside them. A save with the same name in the same run replaces the old one.
 - **Load** copies them back to the same paths in the checkout and fails if any file changed.
-- **Cleanup:** each save deletes that repository's other runs older than `retention-days` (default 2).
-  Re-running a failed job works until then.
+- **Key:** the run ID unless you set `key`, so each run has its own folder. Re-running a failed job
+  finds it again.
+- **Cleanup:** each save deletes that repository's other keys not saved to for `retention-days`
+  (default 2).
 - The run's summary page says what was saved and where.
+
+## Keeping files across runs
+
+Set `key` to something later runs know, such as the commit, and give those files their own `dir`
+so the shorter cleanup of run files doesn't touch them:
+
+```yaml
+- uses: MRezaNasirloo/self-hosted-artifacts/save@v1
+  with:
+    name: release
+    path: app/release/*.apk
+    key: ${{ github.sha }}
+    dir: ~/self-hosted-artifacts-builds
+    retention-days: 30
+```
+
+A later workflow on the same commit loads it with the same `name`, `key` and `dir`.
 
 ## Inputs
 
@@ -45,7 +64,8 @@ jobs:
 | save | `name` | | Name to load the files by |
 | save | `path` | | Patterns, one per line, relative to the checkout. Folders save everything in them. |
 | save | `if-no-files-found` | `error` | `warn` or `ignore` save nothing instead of failing |
-| save | `retention-days` | `2` | Older runs of this repository are deleted on save |
+| save | `retention-days` | `2` | Keys of this repository not saved to for this long are deleted on save |
+| both | `key` | run ID | Folder the files are kept under; save and load must match |
 | both | `dir` | `~/self-hosted-artifacts` | Folder on the machine; save and load must match |
 
 ## Requirements and limits

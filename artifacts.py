@@ -6,9 +6,13 @@ machine, instead of GitHub's artifact storage.
     artifacts.py load <name>    puts <name>'s files back where they were saved from
 
 Every runner the jobs use must be on the same machine. Files are kept under ARTIFACTS_DIR
-(default ~/self-hosted-artifacts), in <owner>_<repository>/<run id>/<name>, at their paths inside
-the checkout. Re-running a job reuses the run's folder, so a failed job can be re-run on its own.
-Each save deletes this repository's other runs older than RETENTION_DAYS (default 2).
+(default ~/self-hosted-artifacts), in <owner>_<repository>/<key>/<name>, at their paths inside
+the checkout. The key is ARTIFACT_KEY, or the run ID when it's empty, so by default each run has
+its own folder and re-running a job finds it again. A key such as a commit ID lets later runs
+load the files too.
+
+Each save deletes this repository's other keys under ARTIFACTS_DIR that haven't been saved to for
+RETENTION_DAYS (default 2). Use a separate ARTIFACTS_DIR for files kept for a different time.
 
 Set IF_NO_FILES_FOUND to warn or ignore to save nothing, instead of failing, when no file matches.
 """
@@ -48,10 +52,19 @@ def repo_dir() -> str:
     return os.path.join(root(), os.environ["GITHUB_REPOSITORY"].replace("/", "_"))
 
 
+def key() -> str:
+    return os.environ.get("ARTIFACT_KEY") or os.environ["GITHUB_RUN_ID"]
+
+
+def check_folder_name(kind: str, value: str) -> None:
+    if not value or "/" in value or value.startswith("."):
+        raise Failure(f"'{value}' can't be used as a {kind}.")
+
+
 def saved_dir(name: str) -> str:
-    if not name or "/" in name or name.startswith("."):
-        raise Failure(f"'{name}' can't be used as a name for saved files.")
-    return os.path.join(repo_dir(), os.environ["GITHUB_RUN_ID"], name)
+    check_folder_name("name", name)
+    check_folder_name("key", key())
+    return os.path.join(repo_dir(), key(), name)
 
 
 def workspace() -> str:
@@ -97,7 +110,7 @@ def matching_files(patterns: list[str]) -> list[str]:
 
 
 def sweep() -> None:
-    """Deletes this repository's runs older than the keep time, except the current one.
+    """Deletes this repository's keys older than the keep time, except the current one.
 
     Best effort: another save may be sweeping at the same moment, and cleanup must never fail a save.
     """
@@ -108,7 +121,7 @@ def sweep() -> None:
         return
     for entry in entries:
         try:
-            if (entry.name != os.environ["GITHUB_RUN_ID"] and entry.is_dir(follow_symlinks=False)
+            if (entry.name != key() and entry.is_dir(follow_symlinks=False)
                     and entry.stat().st_mtime < cutoff):
                 shutil.rmtree(entry.path, ignore_errors=True)
         except OSError:
@@ -154,7 +167,7 @@ def save(name: str) -> None:
         os.rename(scratch, target)
     finally:
         shutil.rmtree(scratch, ignore_errors=True)
-    os.utime(run_dir)  # The run counts as fresh while its jobs keep saving.
+    os.utime(run_dir)  # The key counts as fresh while saves keep coming.
 
     total = sum(entry["size"] for entry in manifest.values())
     count = f"{len(files)} file{'s' if len(files) != 1 else ''}"
@@ -169,8 +182,7 @@ def load(name: str) -> None:
         with open(os.path.join(source, MANIFEST)) as f:
             files = json.load(f)["files"]
     except FileNotFoundError:
-        raise Failure(f"Nothing was saved as {name} in this run, or it has been cleaned up since. "
-                      "Re-run the whole workflow.") from None
+        raise Failure(f"Nothing was saved as {name} under {key()}, or it has been cleaned up since.") from None
 
     for relative, expected in files.items():
         destination = os.path.join(workspace(), relative)

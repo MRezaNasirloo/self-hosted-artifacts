@@ -40,6 +40,28 @@ jobs:
           test "$(cat out/app.apk)" = apk
           test "$(cat out/reports/deep/index.html)" = report
 
+      - name: Save under a key
+        uses: ./save
+        with:
+          name: kept
+          path: out/app.apk
+          key: commit-${{ github.sha }}
+          dir: ~/kept-artifacts
+          retention-days: 30
+
+      - name: Remove the file again
+        run: rm out/app.apk
+
+      - name: Load from the key
+        uses: ./load
+        with:
+          name: kept
+          key: commit-${{ github.sha }}
+          dir: ~/kept-artifacts
+
+      - name: Check the keyed file came back
+        run: test "$(cat out/app.apk)" = apk
+
       - name: Nothing to save, ignored
         uses: ./save
         with:
