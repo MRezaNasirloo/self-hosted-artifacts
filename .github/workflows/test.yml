@@ -1,0 +1,69 @@
+name: Test
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  save-and-load:
+    # GitHub-hosted jobs run on separate machines, so this saves and loads within one job.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Make files
+        run: |
+          mkdir -p out/reports/deep
+          echo apk > out/app.apk
+          echo report > out/reports/deep/index.html
+
+      - uses: ./save
+        with:
+          name: build
+          path: |
+            out/*.apk
+            out/reports
+
+      - name: Remove the files
+        run: rm -rf out
+
+      - uses: ./load
+        with:
+          name: build
+
+      - name: Check the files came back
+        run: |
+          test "$(cat out/app.apk)" = apk
+          test "$(cat out/reports/deep/index.html)" = report
+
+      - name: Nothing to save, ignored
+        uses: ./save
+        with:
+          name: empty
+          path: "*.missing"
+          if-no-files-found: ignore
+
+      - name: Nothing to save, error
+        id: missing
+        continue-on-error: true
+        uses: ./save
+        with:
+          name: empty
+          path: "*.missing"
+
+      - name: Loading an unknown name fails
+        id: unknown
+        continue-on-error: true
+        uses: ./load
+        with:
+          name: never-saved
+
+      - name: Check the failures
+        env:
+          MISSING: ${{ steps.missing.outcome }}
+          UNKNOWN: ${{ steps.unknown.outcome }}
+        run: test "$MISSING" = failure && test "$UNKNOWN" = failure

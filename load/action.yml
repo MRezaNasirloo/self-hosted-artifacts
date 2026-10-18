@@ -1,0 +1,19 @@
+name: Load artifact from the runner
+description: Puts back files an earlier job of this run saved on the self-hosted runner's machine. A stand-in for actions/download-artifact.
+
+inputs:
+  name:
+    description: Name the files were saved under
+    required: true
+  dir:
+    description: Folder on the machine that holds the saved files; must match the save
+    default: ~/self-hosted-artifacts
+
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      env:
+        NAME: ${{ inputs.name }}
+        ARTIFACTS_DIR: ${{ inputs.dir }}
+      run: python3 "$GITHUB_ACTION_PATH/../artifacts.py" load "$NAME"
