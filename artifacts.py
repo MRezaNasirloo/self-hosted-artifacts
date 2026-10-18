@@ -18,6 +18,8 @@ Set IF_NO_FILES_FOUND to warn or ignore to save nothing, instead of failing, whe
 """
 from __future__ import annotations
 
+import contextlib
+import fcntl
 import glob
 import hashlib
 import json
@@ -69,6 +71,14 @@ def saved_dir(name: str) -> str:
 
 def workspace() -> str:
     return os.path.realpath(os.environ.get("GITHUB_WORKSPACE") or os.getcwd())
+
+
+@contextlib.contextmanager
+def locked(key_dir: str):
+    """Saves and loads of one key take turns, since runs can share a key."""
+    with open(os.path.join(key_dir, ".lock"), "w") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        yield
 
 
 def sha256(path: str) -> str:
@@ -160,11 +170,12 @@ def save(name: str) -> None:
         with open(os.path.join(scratch, MANIFEST), "w") as f:
             json.dump({"job": os.environ.get("GITHUB_JOB"), "sha": os.environ.get("GITHUB_SHA"),
                        "files": manifest}, f, indent=2)
-        if os.path.exists(target):
-            old = os.path.join(run_dir, f".replaced-{uuid.uuid4().hex}")
-            os.rename(target, old)
-            shutil.rmtree(old, ignore_errors=True)
-        os.rename(scratch, target)
+        with locked(run_dir):
+            if os.path.exists(target):
+                old = os.path.join(run_dir, f".replaced-{uuid.uuid4().hex}")
+                os.rename(target, old)
+                shutil.rmtree(old, ignore_errors=True)
+            os.rename(scratch, target)
     finally:
         shutil.rmtree(scratch, ignore_errors=True)
     os.utime(run_dir)  # The key counts as fresh while saves keep coming.
@@ -178,19 +189,23 @@ def save(name: str) -> None:
 
 def load(name: str) -> None:
     source = saved_dir(name)
-    try:
-        with open(os.path.join(source, MANIFEST)) as f:
-            files = json.load(f)["files"]
-    except FileNotFoundError:
-        raise Failure(f"Nothing was saved as {name} under {key()}, or it has been cleaned up since.") from None
+    missing = Failure(f"Nothing was saved as {name} under {key()}, or it has been cleaned up since.")
+    if not os.path.isdir(os.path.dirname(source)):
+        raise missing
+    with locked(os.path.dirname(source)):
+        try:
+            with open(os.path.join(source, MANIFEST)) as f:
+                files = json.load(f)["files"]
+        except FileNotFoundError:
+            raise missing from None
 
-    for relative, expected in files.items():
-        destination = os.path.join(workspace(), relative)
-        os.makedirs(os.path.dirname(destination), exist_ok=True)
-        shutil.copy2(os.path.join(source, "files", relative), destination)
-        if sha256(destination) != expected["sha256"]:
-            raise Failure(f"{relative} changed on the runner after it was saved.")
-        print(f"Loaded {relative}")
+        for relative, expected in files.items():
+            destination = os.path.join(workspace(), relative)
+            os.makedirs(os.path.dirname(destination), exist_ok=True)
+            shutil.copy2(os.path.join(source, "files", relative), destination)
+            if sha256(destination) != expected["sha256"]:
+                raise Failure(f"{relative} changed on the runner after it was saved.")
+            print(f"Loaded {relative}")
 
 
 def main() -> None:
