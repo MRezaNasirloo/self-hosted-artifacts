@@ -8,9 +8,9 @@ machine, instead of GitHub's artifact storage.
 Every runner the jobs use must be on the same machine. Files are kept under ARTIFACTS_DIR
 (default ~/self-hosted-artifacts), in <owner>_<repository>/<run id>/<name>, at their paths inside
 the checkout. Re-running a job reuses the run's folder, so a failed job can be re-run on its own.
-Each save deletes this repository's runs older than RETENTION_DAYS (default 2).
+Each save deletes this repository's other runs older than RETENTION_DAYS (default 2).
 
-Set IF_NO_FILES_FOUND=ignore to save nothing, instead of failing, when no file matches.
+Set IF_NO_FILES_FOUND to warn or ignore to save nothing, instead of failing, when no file matches.
 """
 from __future__ import annotations
 
@@ -35,7 +35,13 @@ def root() -> str:
 
 
 def keep_days() -> float:
-    return float(os.environ.get("RETENTION_DAYS") or 2)
+    try:
+        days = float(os.environ.get("RETENTION_DAYS") or 2)
+    except ValueError:
+        days = 0
+    if days <= 0:
+        raise Failure("retention-days must be a number above 0.")
+    return days
 
 
 def repo_dir() -> str:
@@ -81,34 +87,50 @@ def matching_files(patterns: list[str]) -> list[str]:
             paths = [match] if os.path.isfile(match) else [
                 os.path.join(folder, file) for folder, _, files in os.walk(match) for file in files]
             for path in paths:
-                relative = os.path.relpath(os.path.realpath(path), base)
-                if relative.startswith(".."):
+                # Saved under its own path, but a link must not lead outside the checkout either.
+                relative = os.path.relpath(os.path.abspath(path), base)
+                target = os.path.relpath(os.path.realpath(path), base)
+                if relative.startswith("..") or target.startswith(".."):
                     raise Failure(f"{pattern} reaches outside the checkout.")
                 found.add(relative)
     return sorted(found)
 
 
 def sweep() -> None:
-    """Deletes runs older than the keep time, and leftovers of saves that crashed."""
+    """Deletes this repository's runs older than the keep time, except the current one.
+
+    Best effort: another save may be sweeping at the same moment, and cleanup must never fail a save.
+    """
     cutoff = time.time() - keep_days() * 86400
-    if not os.path.isdir(repo_dir()):
+    try:
+        entries = list(os.scandir(repo_dir()))
+    except OSError:
         return
-    for entry in os.scandir(repo_dir()):
-        if entry.is_dir(follow_symlinks=False) and entry.stat().st_mtime < cutoff:
-            shutil.rmtree(entry.path, ignore_errors=True)
+    for entry in entries:
+        try:
+            if (entry.name != os.environ["GITHUB_RUN_ID"] and entry.is_dir(follow_symlinks=False)
+                    and entry.stat().st_mtime < cutoff):
+                shutil.rmtree(entry.path, ignore_errors=True)
+        except OSError:
+            continue
 
 
 def save(name: str) -> None:
     target = saved_dir(name)
+    keep_days()  # Reject a bad retention before saving anything.
     patterns = [line.strip() for line in os.environ.get("ARTIFACT_PATH", "").splitlines() if line.strip()]
     if not patterns:
         raise Failure("No files to save: the path input is empty.")
     files = matching_files(patterns)
+    if_missing = os.environ.get("IF_NO_FILES_FOUND") or "error"
+    if if_missing not in ("error", "warn", "ignore"):
+        raise Failure(f"if-no-files-found must be error, warn or ignore, not '{if_missing}'.")
     if not files:
-        if os.environ.get("IF_NO_FILES_FOUND") == "ignore":
-            print(f"No files match {', '.join(patterns)}; nothing saved.")
-            return
-        raise Failure(f"No files match {', '.join(patterns)}.")
+        message = f"No files match {', '.join(patterns)}"
+        if if_missing == "error":
+            raise Failure(f"{message}.")
+        print(f"{'::warning::' if if_missing == 'warn' else ''}{message}; nothing saved.")
+        return
 
     # Copy into a scratch folder first, then swap it in, so a load never sees half a save.
     run_dir = os.path.dirname(target)
@@ -147,8 +169,8 @@ def load(name: str) -> None:
         with open(os.path.join(source, MANIFEST)) as f:
             files = json.load(f)["files"]
     except FileNotFoundError:
-        raise Failure(f"Nothing was saved as {name} in this run, or it was older than "
-                      f"{keep_days():g} days and has been deleted. Re-run the whole workflow.") from None
+        raise Failure(f"Nothing was saved as {name} in this run, or it has been cleaned up since. "
+                      "Re-run the whole workflow.") from None
 
     for relative, expected in files.items():
         destination = os.path.join(workspace(), relative)

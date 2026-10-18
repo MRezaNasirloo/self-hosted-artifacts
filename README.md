@@ -31,10 +31,10 @@ jobs:
 
 ## How it works
 
-- **Save** copies the matching files to `~/self-hosted-artifacts/<owner>_<repo>/<run id>/<name>/`,
-  with a checksum of each. A save with the same name in the same run replaces the old one.
+- **Save** copies the matching files to `~/self-hosted-artifacts/<owner>_<repo>/<run id>/<name>/files/`,
+  with a checksum of each in `manifest.json` beside them. A save with the same name in the same run replaces the old one.
 - **Load** copies them back to the same paths in the checkout and fails if any file changed.
-- **Cleanup:** each save deletes that repository's runs older than `retention-days` (default 2).
+- **Cleanup:** each save deletes that repository's other runs older than `retention-days` (default 2).
   Re-running a failed job works until then.
 - The run's summary page says what was saved and where.
 
@@ -44,7 +44,7 @@ jobs:
 |---|---|---|---|
 | save | `name` | | Name to load the files by |
 | save | `path` | | Patterns, one per line, relative to the checkout. Folders save everything in them. |
-| save | `if-no-files-found` | `error` | `ignore` saves nothing instead of failing |
+| save | `if-no-files-found` | `error` | `warn` or `ignore` save nothing instead of failing |
 | save | `retention-days` | `2` | Older runs of this repository are deleted on save |
 | both | `dir` | `~/self-hosted-artifacts` | Folder on the machine; save and load must match |
 

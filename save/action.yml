@@ -9,7 +9,7 @@ inputs:
     description: Files to save, one pattern per line, relative to the checkout. Folders save everything in them.
     required: true
   if-no-files-found:
-    description: "'error' to fail when nothing matches, 'ignore' to save nothing"
+    description: "'error' to fail when nothing matches; 'warn' or 'ignore' to save nothing, with or without a warning"
     default: error
   retention-days:
     description: Runs of this repository older than this are deleted when saving
